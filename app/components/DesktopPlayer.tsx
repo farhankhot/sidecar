@@ -27,9 +27,10 @@ interface DesktopPlayerProps {
   videoId: string;
   onStateUpdate: (state: Partial<RoomState>) => void;
   onHeartbeat: (currentTime: number, isPlaying: boolean) => void;
+  remotePlay?: { isPlaying: boolean; currentTime: number } | null;
 }
 
-export default function DesktopPlayer({ videoId, onStateUpdate, onHeartbeat }: DesktopPlayerProps) {
+export default function DesktopPlayer({ videoId, onStateUpdate, onHeartbeat, remotePlay }: DesktopPlayerProps) {
   const playerRef = useRef<YouTubePlayer | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
@@ -69,30 +70,32 @@ export default function DesktopPlayer({ videoId, onStateUpdate, onHeartbeat }: D
         videoId: videoId,
         playerVars: {
           autoplay: 0,
-          controls: 0,
-          disablekb: 1,
-          fs: 0,
-          modestbranding: 1,
+          mute: 1,
+          controls: 1,
+          playsinline: 1,
+          origin: typeof window !== "undefined" ? window.location.origin : "",
           rel: 0,
+          modestbranding: 1,
         },
         events: {
           onReady: (event: any) => {
             playerRef.current = event.target;
             event.target.mute();
             setIsReady(true);
-            setDuration(event.target.getDuration());
+            setDuration(event.target.getDuration() || 0);
             setEmbedError(null);
           },
           onStateChange: (event: any) => {
-            const playing = event.data === window.YT.PlayerState.PLAYING;
-            setIsPlaying(playing);
-            
-            if (playing) {
+            const YTState = window.YT.PlayerState;
+            const time = event.target.getCurrentTime();
+            setCurrentTime(time);
+            if (event.data === YTState.PLAYING) {
+              setIsPlaying(true);
               startHeartbeat();
-            } else {
+              onStateUpdate({ isPlaying: true, currentTime: time });
+            } else if (event.data === YTState.PAUSED || event.data === YTState.ENDED) {
+              setIsPlaying(false);
               stopHeartbeat();
-              const time = event.target.getCurrentTime();
-              setCurrentTime(time);
               onStateUpdate({ isPlaying: false, currentTime: time });
             }
           },
@@ -121,6 +124,16 @@ export default function DesktopPlayer({ videoId, onStateUpdate, onHeartbeat }: D
       }
     };
   }, [videoId]);
+
+  useEffect(() => {
+    if (!remotePlay || !isReady || !playerRef.current) return;
+    playerRef.current.mute();
+    if (remotePlay.isPlaying) {
+      playerRef.current.playVideo();
+    } else {
+      playerRef.current.pauseVideo();
+    }
+  }, [remotePlay, isReady]);
 
   const startHeartbeat = () => {
     stopHeartbeat();

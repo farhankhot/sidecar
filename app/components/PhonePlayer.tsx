@@ -281,9 +281,13 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
         </div>
       )}
 
-      {/* YouTube iframe MUST stay mounted even while loading, or iOS never inits. */}
-      <div className="relative mx-4 mt-4 aspect-video bg-black rounded-lg overflow-hidden">
-        <div ref={containerRef} className="absolute inset-0 w-full h-full" />
+      {/* Hidden audio player: real size, off-screen so iOS will play, no video on the phone. */}
+      <div
+        aria-hidden
+        className="pointer-events-none"
+        style={{ position: "fixed", left: -9999, top: 0, width: 320, height: 180, opacity: 0 }}
+      >
+        <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
       </div>
 
       {/* Main content */}

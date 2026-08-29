@@ -14,6 +14,7 @@ export default function DesktopPage() {
   const [joinUrl, setJoinUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [remotePlay, setRemotePlay] = useState<{ isPlaying: boolean; currentTime: number } | null>(null);
   
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -33,6 +34,8 @@ export default function DesktopPage() {
       
       if (data.type === 'room_created') {
         setRoomCode(data.roomCode);
+      } else if (data.type === 'state_update' && data.state) {
+        setRemotePlay({ isPlaying: !!data.state.isPlaying, currentTime: data.state.currentTime || 0 });
       } else if (data.type === 'error') {
         setError(data.message);
       }
@@ -170,6 +173,7 @@ export default function DesktopPage() {
               videoId={videoId}
               onStateUpdate={handleStateUpdate}
               onHeartbeat={handleHeartbeat}
+              remotePlay={remotePlay}
             />
           )}
         </div>
