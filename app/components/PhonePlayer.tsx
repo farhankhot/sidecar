@@ -39,6 +39,9 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
   const [duration, setDuration] = useState(0);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing'>('synced');
   const [embedError, setEmbedError] = useState<string | null>(null);
+  const [unlocked, setUnlocked] = useState(false);
+  const stateRef = useRef(roomState);
+  stateRef.current = roomState;
 
   useEffect(() => {
     if (!roomState.videoId || !containerRef.current) return;
@@ -73,6 +76,8 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
           fs: 0,
           modestbranding: 1,
           rel: 0,
+          playsinline: 1,
+          origin: window.location.origin,
         },
         events: {
           onReady: (event: any) => {
@@ -130,23 +135,24 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
     stopSyncCheck();
     
     syncCheckRef.current = setInterval(() => {
-      if (playerRef.current && roomState) {
+      const state = stateRef.current;
+      if (playerRef.current && state) {
         const currentTime = playerRef.current.getCurrentTime();
-        const drift = Math.abs(currentTime - roomState.currentTime);
+        const drift = Math.abs(currentTime - state.currentTime);
         
         setLocalTime(currentTime);
 
         // Sync if drift is more than 400ms
         if (drift > 0.4) {
           setSyncStatus('syncing');
-          playerRef.current.seekTo(roomState.currentTime, true);
+          playerRef.current.seekTo(state.currentTime, true);
           setTimeout(() => setSyncStatus('synced'), 1000);
         }
 
         // Sync playing state
         const isPlaying = playerRef.current.getPlayerState() === window.YT.PlayerState.PLAYING;
-        if (isPlaying !== roomState.isPlaying) {
-          if (roomState.isPlaying) {
+        if (isPlaying !== state.isPlaying) {
+          if (state.isPlaying) {
             playerRef.current.playVideo();
           } else {
             playerRef.current.pauseVideo();
@@ -160,6 +166,30 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
     if (syncCheckRef.current) {
       clearInterval(syncCheckRef.current);
       syncCheckRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!unlocked || !isReady || !playerRef.current) return;
+    if (roomState.isPlaying) {
+      playerRef.current.playVideo();
+    } else {
+      playerRef.current.pauseVideo();
+    }
+  }, [roomState.isPlaying, unlocked, isReady]);
+
+  const handleUnlock = () => {
+    setUnlocked(true);
+    const player = playerRef.current;
+    if (!player) return;
+    player.unMute();
+    player.setVolume(stateRef.current.volume || 100);
+    player.seekTo(stateRef.current.currentTime || 0, true);
+    player.playVideo();
+    if (!stateRef.current.isPlaying) {
+      setTimeout(() => {
+        if (!stateRef.current.isPlaying) player.pauseVideo();
+      }, 80);
     }
   };
 
@@ -220,7 +250,7 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
   }
 
   return (
-    <div className="flex flex-col h-screen bg-zinc-950">
+    <div className="relative flex flex-col h-screen bg-zinc-950">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
         <div>
@@ -237,9 +267,33 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
         </div>
       </header>
 
+      {!unlocked && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-zinc-950/95 px-6">
+          <button
+            onClick={handleUnlock}
+            className="w-full max-w-sm px-8 py-6 bg-white text-zinc-950 rounded-lg font-bold text-xl active:scale-95"
+          >
+            Tap to hear
+          </button>
+          <p className="mt-4 text-sm text-zinc-400 text-center">
+            Required on iPhone. After this, play/pause on the laptop controls the sound here.
+          </p>
+        </div>
+      )}
+
+      {/* YouTube iframe MUST stay mounted even while loading, or iOS never inits. */}
+      <div className="relative mx-4 mt-4 aspect-video bg-black rounded-lg overflow-hidden">
+        <div ref={containerRef} className="absolute inset-0 w-full h-full" />
+      </div>
+
       {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center p-6">
-        {!isReady ? (
+        {!roomState.videoId ? (
+          <div className="text-center space-y-4">
+            <p className="text-zinc-400">Waiting for a video on the laptop</p>
+            <p className="text-xs text-zinc-600">Paste a YouTube link on desktop, then press play</p>
+          </div>
+        ) : !isReady ? (
           <div className="text-center space-y-4">
             <div className="w-16 h-16 mx-auto bg-zinc-800 rounded-full flex items-center justify-center animate-pulse">
               <svg className="w-8 h-8 text-zinc-400" fill="currentColor" viewBox="0 0 20 20">
@@ -250,13 +304,6 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
           </div>
         ) : (
           <div className="w-full max-w-sm space-y-8">
-            {/* Small video preview (hidden but needs to exist) */}
-            <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
-              <div ref={containerRef} className="absolute inset-0" />
-              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                <p className="text-xs text-zinc-500">Video on desktop</p>
-              </div>
-            </div>
 
             {/* Large play/pause button */}
             <div className="flex justify-center">
