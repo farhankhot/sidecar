@@ -126,11 +126,15 @@ export default function DesktopPlayer({ videoId, onStateUpdate, onHeartbeat, rem
   }, [videoId]);
 
   useEffect(() => {
-    if (!remotePlay || !isReady || !playerRef.current) return;
+    if (!remotePlay || !isReady || !playerRef.current || !window.YT) return;
     playerRef.current.mute();
+    const st = playerRef.current.getPlayerState();
+    const YTState = window.YT.PlayerState;
     if (remotePlay.isPlaying) {
-      playerRef.current.playVideo();
-    } else {
+      if (st !== YTState.PLAYING && st !== YTState.BUFFERING) {
+        playerRef.current.playVideo();
+      }
+    } else if (st === YTState.PLAYING) {
       playerRef.current.pauseVideo();
     }
   }, [remotePlay, isReady]);

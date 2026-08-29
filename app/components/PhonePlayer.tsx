@@ -42,6 +42,17 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
   const [unlocked, setUnlocked] = useState(false);
   const stateRef = useRef(roomState);
   stateRef.current = roomState;
+  const hostClockRef = useRef({ time: 0, at: 0, playing: false, rate: 1 });
+  const lastSeekAtRef = useRef(0);
+
+  useEffect(() => {
+    hostClockRef.current = {
+      time: roomState.currentTime || 0,
+      at: Date.now(),
+      playing: !!roomState.isPlaying,
+      rate: roomState.playbackRate || 1,
+    };
+  }, [roomState.currentTime, roomState.isPlaying, roomState.playbackRate]);
 
   useEffect(() => {
     if (!roomState.videoId || !containerRef.current) return;
@@ -131,35 +142,48 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
     };
   }, [roomState.videoId]);
 
+  const expectedHostTime = () => {
+    const clock = hostClockRef.current;
+    if (!clock.playing) return clock.time;
+    return clock.time + ((Date.now() - clock.at) / 1000) * clock.rate;
+  };
+
   const startSyncCheck = () => {
     stopSyncCheck();
-    
+
     syncCheckRef.current = setInterval(() => {
+      const player = playerRef.current;
       const state = stateRef.current;
-      if (playerRef.current && state) {
-        const currentTime = playerRef.current.getCurrentTime();
-        const drift = Math.abs(currentTime - state.currentTime);
-        
-        setLocalTime(currentTime);
+      if (!player || !state || !window.YT) return;
 
-        // Sync if drift is more than 400ms
-        if (drift > 0.4) {
-          setSyncStatus('syncing');
-          playerRef.current.seekTo(state.currentTime, true);
-          setTimeout(() => setSyncStatus('synced'), 1000);
-        }
+      const YTState = window.YT.PlayerState;
+      const playerState = player.getPlayerState();
+      if (playerState === YTState.BUFFERING || playerState === YTState.UNSTARTED) return;
 
-        // Sync playing state
-        const isPlaying = playerRef.current.getPlayerState() === window.YT.PlayerState.PLAYING;
-        if (isPlaying !== state.isPlaying) {
-          if (state.isPlaying) {
-            playerRef.current.playVideo();
-          } else {
-            playerRef.current.pauseVideo();
-          }
-        }
+      const currentTime = player.getCurrentTime();
+      setLocalTime(currentTime);
+
+      const expected = expectedHostTime();
+      const drift = currentTime - expected;
+
+      if (Date.now() - lastSeekAtRef.current < 2500) return;
+
+      if (Math.abs(drift) > 1.25) {
+        setSyncStatus('syncing');
+        lastSeekAtRef.current = Date.now();
+        player.seekTo(Math.max(0, expected), true);
+        setTimeout(() => setSyncStatus('synced'), 800);
+      } else {
+        setSyncStatus('synced');
       }
-    }, 1000);
+
+      const isPlaying = playerState === YTState.PLAYING;
+      if (state.isPlaying && !isPlaying) {
+        player.playVideo();
+      } else if (!state.isPlaying && isPlaying) {
+        player.pauseVideo();
+      }
+    }, 1500);
   };
 
   const stopSyncCheck = () => {
@@ -170,13 +194,27 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
   };
 
   useEffect(() => {
-    if (!unlocked || !isReady || !playerRef.current) return;
+    if (!unlocked || !isReady || !playerRef.current || !window.YT) return;
+    const st = playerRef.current.getPlayerState();
+    const YTState = window.YT.PlayerState;
     if (roomState.isPlaying) {
-      playerRef.current.playVideo();
-    } else {
+      if (st !== YTState.PLAYING && st !== YTState.BUFFERING) {
+        playerRef.current.playVideo();
+      }
+    } else if (st === YTState.PLAYING) {
       playerRef.current.pauseVideo();
     }
   }, [roomState.isPlaying, unlocked, isReady]);
+
+  useEffect(() => {
+    if (!unlocked || !isReady || !playerRef.current) return;
+    const local = playerRef.current.getCurrentTime();
+    const host = roomState.currentTime || 0;
+    if (Math.abs(local - host) > 2.5) {
+      lastSeekAtRef.current = Date.now();
+      playerRef.current.seekTo(host, true);
+    }
+  }, [roomState.currentTime, unlocked, isReady]);
 
   const handleUnlock = () => {
     setUnlocked(true);
@@ -252,7 +290,7 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
   return (
     <div className="relative flex flex-col h-screen bg-zinc-950">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+      <header className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-zinc-800">
         <div>
           <div className="text-xs text-zinc-500">Room</div>
           <div className="font-mono font-bold text-sm">{roomCode}</div>
@@ -281,17 +319,17 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
         </div>
       )}
 
-      {/* Hidden audio player: real size, off-screen so iOS will play, no video on the phone. */}
+      {/* In-viewport, near-invisible. Off-screen players get throttled by iOS and stutter. */}
       <div
         aria-hidden
         className="pointer-events-none"
-        style={{ position: "fixed", left: -9999, top: 0, width: 320, height: 180, opacity: 0 }}
+        style={{ position: "fixed", left: 0, bottom: 0, width: 320, height: 180, opacity: 0.01, zIndex: 0 }}
       >
         <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col items-center justify-center p-6">
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-6">
         {!roomState.videoId ? (
           <div className="text-center space-y-4">
             <p className="text-zinc-400">Waiting for a video on the laptop</p>
@@ -368,7 +406,7 @@ export default function PhonePlayer({ roomCode, roomState, onStateUpdate, connec
       </div>
 
       {/* Footer info */}
-      <div className="px-4 py-3 border-t border-zinc-800 text-center">
+      <div className="relative z-10 px-4 py-3 border-t border-zinc-800 text-center">
         <p className="text-xs text-zinc-600">
           Keep this tab open and screen on for uninterrupted audio
         </p>
